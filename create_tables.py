@@ -11,6 +11,7 @@ def drop_tables(cur, conn):
 
 def create_tables(cur, conn):
     for query in create_table_queries:
+        print(query)
         cur.execute(query)
         conn.commit()
 
@@ -19,7 +20,8 @@ def main():
     config = configparser.ConfigParser()
     config.read('dwh.cfg')
 
-    conn = psycopg2.connect("host={} dbname={} user={} password={} port={}".format(*config['CLUSTER'].values()))
+    conn = psycopg2.connect("host={} dbname={} user={} password={} port={}".format(*config['DB'].values()))
+    print(conn)
     cur = conn.cursor()
 
     drop_tables(cur, conn)
