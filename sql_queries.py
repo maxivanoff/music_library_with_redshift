@@ -1,10 +1,13 @@
 import configparser
 
-
 # CONFIG
 config = configparser.ConfigParser()
 config.read_file(open('dwh.cfg'))
 IAM_ROLE_ARN = config.get("IAM", "IAM_ROLE_ARN")
+LOG_DATA = config.get("S3", "LOG_DATA")
+SONG_DATA = config.get("S3", "SONG_DATA")
+JSON_PATH_SONGS = config.get("S3", "JSON_PATH_SONGS")
+JSON_PATH_EVENTS = config.get("S3", "JSON_PATH_EVENTS")
 
 # DROP TABLES
 
@@ -27,7 +30,7 @@ CREATE TABLE IF NOT EXISTS staging_events (
     location        varchar,
     artist          varchar, 
     auth            varchar, 
-    ts              varchar,
+    ts              bigint,
     item_in_session int,
     session_id      varchar,
     song            varchar,
@@ -59,14 +62,14 @@ CREATE TABLE IF NOT EXISTS staging_songs (
 
 songplay_table_create = ("""
 CREATE TABLE IF NOT EXISTS songplays (
-    songplay_id     varchar, 
-    start_time      varchar NOT NULL, 
-    user_id         varchar NOT NULL, 
-    level           varchar, 
-    song_id         varchar NOT NULL, 
-    artist_id       varchar NOT NULL, 
-    session_id      varchar, 
-    location        varchar, 
+    songplay_id     bigint identity(0, 1),
+    start_time      varchar NOT NULL,
+    user_id         varchar NOT NULL,
+    level           varchar,
+    song_id         varchar NOT NULL,
+    artist_id       varchar NOT NULL,
+    session_id      varchar,
+    location        varchar,
     user_agent      varchar,
     PRIMARY KEY (songplay_id)
 );
@@ -85,7 +88,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 song_table_create = ("""
 CREATE TABLE IF NOT EXISTS songs (
-    song_id         varchar, 
+    song_id         varchar NOT NULL, 
     title           varchar, 
     artist_id       varchar NOT NULL, 
     year            int, 
@@ -96,7 +99,7 @@ CREATE TABLE IF NOT EXISTS songs (
 
 artist_table_create = ("""
 CREATE TABLE IF NOT EXISTS artists (
-    artist_id       varchar, 
+    artist_id       varchar NOT NULL, 
     name            varchar, 
     location        varchar, 
     latitude        varchar, 
@@ -123,34 +126,70 @@ CREATE TABLE IF NOT EXISTS time (
 
 staging_events_copy = ("""
 copy staging_events
-from 's3://udacity-dend/log_data/'
-iam_role '{}'
-JSON 'auto';
-""").format(IAM_ROLE_ARN)
+from '{logs}'
+iam_role '{iam}'
+format as json '{json}';
+""").format(logs=LOG_DATA,iam=IAM_ROLE_ARN,json=JSON_PATH_EVENTS)
 
 
 staging_songs_copy = ("""
 copy staging_songs
-from 's3://udacity-dend/song_data/'
-iam_role '{}'
-JSON 'auto';
-""").format(IAM_ROLE_ARN)
+from '{songs}'
+iam_role '{iam}'
+format as json '{json}';
+""").format(songs=SONG_DATA,iam=IAM_ROLE_ARN,json=JSON_PATH_SONGS)
 
 # FINAL TABLES
 
 songplay_table_insert = ("""
+INSERT INTO songplays (start_time, user_id, level, song_id, artist_id, session_id, location, user_agent)
+(
+SELECT (timestamp 'epoch' + se.ts / 1000 * interval '1 second') as start_time,
+se.user_id, se.level, ss.song_id, ss.artist_id, se.session_id, ss.artist_location as location, se.user_agent
+FROM staging_events se, staging_songs ss
+WHERE (start_time IS NOT NULL) AND
+(se.user_id IS NOT NULL) AND
+(ss.song_id IS NOT NULL) AND 
+(ss.artist_id IS NOT NULL)
+);
 """)
 
 user_table_insert = ("""
+INSERT INTO users (user_id, first_name, last_name, gender, level)
+(
+SELECT DISTINCT se.user_id, se.first_name, se.last_name, se.gender, se.level FROM staging_events se
+WHERE (se.user_id IS NOT NULL)
+);
 """)
 
 song_table_insert = ("""
+INSERT INTO songs (song_id, title, artist_id, year, duration)
+(
+SELECT DISTINCT ss.song_id, ss.title, ss.artist_id, ss.year, ss.duration FROM staging_songs ss
+WHERE (ss.song_id IS NOT NULL) AND (ss.artist_id IS NOT NULL)
+);
 """)
 
 artist_table_insert = ("""
+INSERT INTO artists (artist_id, name, location, latitude, longitude)
+(
+SELECT DISTINCT ss.artist_id, ss.artist_name, ss.artist_location, ss.artist_latitude, ss.artist_longitude FROM staging_songs ss
+WHERE (ss.artist_id IS NOT NULL)
+);
 """)
 
 time_table_insert = ("""
+INSERT INTO time (start_time, hour, day, week, month, year, weekday)
+(
+SELECT timestamp 'epoch' + se.ts / 1000 * interval '1 second' as start_time,
+DATE_PART(hrs, start_time) as hour,
+DATE_PART(dayofyear, start_time) as day,
+DATE_PART(w, start_time) as week,
+DATE_PART(mons ,start_time) as month,
+DATE_PART(yrs , start_time) as year,
+DATE_PART(dow, start_time) as weekday
+from staging_events se
+);
 """)
 
 # QUERY LISTS
