@@ -11,6 +11,7 @@ def load_staging_tables(cur, conn):
     :paramt conn: psycopg2.connect
     """
     for query in copy_table_queries:
+        print(query)
         cur.execute(query)
         conn.commit()
 

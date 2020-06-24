@@ -6,7 +6,6 @@ config.read_file(open('dwh.cfg'))
 IAM_ROLE_ARN = config.get("IAM", "IAM_ROLE_ARN")
 LOG_DATA = config.get("S3", "LOG_DATA")
 SONG_DATA = config.get("S3", "SONG_DATA")
-JSON_PATH_SONGS = config.get("S3", "JSON_PATH_SONGS")
 JSON_PATH_EVENTS = config.get("S3", "JSON_PATH_EVENTS")
 
 # DROP TABLES
@@ -23,24 +22,24 @@ time_table_drop = "DROP TABLE IF EXISTS time"
 
 staging_events_table_create= ("""
 CREATE TABLE IF NOT EXISTS staging_events (
-    user_id         int,
-    first_name      varchar,
-    last_name       varchar,
-    gender          varchar,
-    location        varchar,
     artist          varchar, 
     auth            varchar, 
-    ts              bigint,
-    item_in_session int,
-    session_id      varchar,
-    song            varchar,
+    firstName       varchar,
+    gender          varchar,
+    ItemInSession   int,
+    lastName        varchar,
     length          float,
     level           varchar,
+    location        varchar,
     method          varchar,
     page            varchar,
     registration    float,
+    sessionId       varchar,
+    song            varchar,
     status          int,
-    user_agent      varchar
+    ts              bigint,
+    userAgent       varchar,
+    userId          int
 );
 """)
 
@@ -62,27 +61,27 @@ CREATE TABLE IF NOT EXISTS staging_songs (
 
 songplay_table_create = ("""
 CREATE TABLE IF NOT EXISTS songplays (
-    songplay_id     bigint identity(0, 1),
+    songplay_id     varchar,
     start_time      varchar NOT NULL,
-    user_id         varchar NOT NULL,
+    userId          varchar NOT NULL,
     level           varchar,
     song_id         varchar NOT NULL,
     artist_id       varchar NOT NULL,
-    session_id      varchar,
+    sessionId       varchar,
     location        varchar,
-    user_agent      varchar,
+    userAgent       varchar,
     PRIMARY KEY (songplay_id)
 );
 """)
 
 user_table_create = ("""
 CREATE TABLE IF NOT EXISTS users (
-    user_id         varchar, 
-    first_name      varchar, 
-    last_name       varchar, 
+    userId          varchar, 
+    firstName       varchar, 
+    lastName        varchar, 
     gender          varchar, 
     level           varchar,
-    PRIMARY KEY (user_id)
+    PRIMARY KEY (userId)
 );
 """)
 
@@ -136,29 +135,49 @@ staging_songs_copy = ("""
 copy staging_songs
 from '{songs}'
 iam_role '{iam}'
-format as json '{json}';
-""").format(songs=SONG_DATA,iam=IAM_ROLE_ARN,json=JSON_PATH_SONGS)
+json 'auto';
+""").format(songs=SONG_DATA,iam=IAM_ROLE_ARN)
 
 # FINAL TABLES
 
 songplay_table_insert = ("""
-INSERT INTO songplays (start_time, user_id, level, song_id, artist_id, session_id, location, user_agent)
+INSERT INTO songplays (start_time, userId, level, song_id, artist_id, sessionId, location, userAgent)
 (
 SELECT (timestamp 'epoch' + se.ts / 1000 * interval '1 second') as start_time,
-se.user_id, se.level, ss.song_id, ss.artist_id, se.session_id, ss.artist_location as location, se.user_agent
+se.userId, se.level, ss.song_id, ss.artist_id, se.sessionId, ss.artist_location as location, se.userAgent
 FROM staging_events se, staging_songs ss
 WHERE (start_time IS NOT NULL) AND
-(se.user_id IS NOT NULL) AND
+(se.userId IS NOT NULL) AND
 (ss.song_id IS NOT NULL) AND 
 (ss.artist_id IS NOT NULL)
 );
 """)
 
-user_table_insert = ("""
-INSERT INTO users (user_id, first_name, last_name, gender, level)
+songplay_table_insert = ("""
+INSERT INTO songplays
 (
-SELECT DISTINCT se.user_id, se.first_name, se.last_name, se.gender, se.level FROM staging_events se
-WHERE (se.user_id IS NOT NULL)
+SELECT
+md5(events.sessionid || events.start_time) songplay_id,
+events.start_time,
+events.userid,
+events.level,
+songs.song_id,
+songs.artist_id,
+events.sessionid,
+events.location,
+events.useragent
+FROM (SELECT TIMESTAMP 'epoch' + ts/1000 * interval '1 second' AS start_time, * FROM staging_events WHERE page='NextSong') events
+LEFT JOIN staging_songs songs
+ON events.song = songs.title AND events.artist = songs.artist_name AND events.length = songs.duration
+WHERE (start_time IS NOT NULL) AND (events.userid IS NOT NULL) AND (songs.song_id IS NOT NULL) AND (songs.artist_id IS NOT NULL)
+);
+""")
+
+user_table_insert = ("""
+INSERT INTO users (userId, firstName, lastName, gender, level)
+(
+SELECT DISTINCT se.userId, se.firstName, se.lastName, se.gender, se.level FROM staging_events se
+WHERE (se.userId IS NOT NULL)
 );
 """)
 
